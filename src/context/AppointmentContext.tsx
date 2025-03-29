@@ -1,34 +1,76 @@
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Appointment } from '@/types/appointment';
-import { isOverlapping } from '@/utils/timeUtils';
+import { fetchAppointments, createAppointment, updateAppointment, deleteAppointment } from '@/services/api';
+import { toast } from '@/components/ui/use-toast';
 
 interface AppointmentContextType {
   appointments: Appointment[];
-  addAppointment: (appointment: Omit<Appointment, 'id'>) => boolean;
-  updateAppointment: (appointmentId: string, updatedAppointment: Omit<Appointment, 'id'>) => boolean;
-  deleteAppointment: (appointmentId: string) => void;
+  isLoading: boolean;
+  error: Error | null;
+  addAppointment: (appointment: Omit<Appointment, 'id'>) => Promise<boolean>;
+  updateAppointment: (appointmentId: string, updatedAppointment: Omit<Appointment, 'id'>) => Promise<boolean>;
+  deleteAppointment: (appointmentId: string) => Promise<void>;
   checkAvailability: (practitioner: string, date: string, startTime: string, endTime: string, excludeId?: string) => boolean;
 }
 
 const AppointmentContext = createContext<AppointmentContextType | undefined>(undefined);
 
 export const AppointmentProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const queryClient = useQueryClient();
+  
+  // Fetch appointments
+  const { data: appointments = [], isLoading, error } = useQuery({
+    queryKey: ['appointments'],
+    queryFn: fetchAppointments,
+  });
 
-  // Load appointments from localStorage on mount
-  useEffect(() => {
-    const savedAppointments = localStorage.getItem('appointments');
-    if (savedAppointments) {
-      setAppointments(JSON.parse(savedAppointments));
+  // Mutations
+  const createMutation = useMutation({
+    mutationFn: createAppointment,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
     }
-  }, []);
+  });
 
-  // Save appointments to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem('appointments', JSON.stringify(appointments));
-  }, [appointments]);
+  const updateMutation = useMutation({
+    mutationFn: ({ id, appointment }: { id: string; appointment: Omit<Appointment, 'id'> }) => 
+      updateAppointment(id, appointment),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
 
+  const deleteMutation = useMutation({
+    mutationFn: deleteAppointment,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  });
+
+  // Determine if a time slot is available
   const checkAvailability = (
     practitioner: string,
     date: string,
@@ -42,66 +84,53 @@ export const AppointmentProvider: React.FC<{ children: React.ReactNode }> = ({ c
     );
 
     // Check for overlaps with existing appointments
-    return !practitionerAppointments.some((a) =>
+    const hasOverlap = practitionerAppointments.some((a) =>
       isOverlapping(startTime, endTime, a.startTime, a.endTime)
     );
+
+    return !hasOverlap;
   };
 
-  const addAppointment = (appointment: Omit<Appointment, 'id'>): boolean => {
-    // Check if the time slot is available
-    if (!checkAvailability(
-      appointment.practitioner,
-      appointment.date,
-      appointment.startTime,
-      appointment.endTime
-    )) {
-      return false; // Time slot is not available
+  // Add a new appointment
+  const addAppointment = async (appointment: Omit<Appointment, 'id'>): Promise<boolean> => {
+    try {
+      await createMutation.mutateAsync(appointment);
+      return true;
+    } catch (error) {
+      return false;
     }
-
-    // Add the appointment with a unique ID
-    const newAppointment: Appointment = {
-      ...appointment,
-      id: Date.now().toString(),
-    };
-
-    setAppointments((prev) => [...prev, newAppointment]);
-    return true;
   };
 
-  const updateAppointment = (
+  // Update an existing appointment
+  const updateAppointmentHandler = async (
     appointmentId: string,
     updatedAppointment: Omit<Appointment, 'id'>
-  ): boolean => {
-    // Check if the time slot is available (excluding the current appointment)
-    if (!checkAvailability(
-      updatedAppointment.practitioner,
-      updatedAppointment.date,
-      updatedAppointment.startTime,
-      updatedAppointment.endTime,
-      appointmentId
-    )) {
-      return false; // Time slot is not available
+  ): Promise<boolean> => {
+    try {
+      await updateMutation.mutateAsync({ 
+        id: appointmentId, 
+        appointment: updatedAppointment 
+      });
+      return true;
+    } catch (error) {
+      return false;
     }
-
-    setAppointments((prev) =>
-      prev.map((a) =>
-        a.id === appointmentId ? { ...updatedAppointment, id: appointmentId } : a
-      )
-    );
-    return true;
   };
 
-  const deleteAppointment = (appointmentId: string) => {
-    setAppointments((prev) => prev.filter((a) => a.id !== appointmentId));
+  // Delete an appointment
+  const deleteAppointmentHandler = async (appointmentId: string): Promise<void> => {
+    await deleteMutation.mutateAsync(appointmentId);
   };
 
   return (
     <AppointmentContext.Provider
       value={{
         appointments,
+        isLoading,
+        error: error as Error | null,
         addAppointment,
-        updateAppointment,
-        deleteAppointment,
+        updateAppointment: updateAppointmentHandler,
+        deleteAppointment: deleteAppointmentHandler,
         checkAvailability,
       }}
     >

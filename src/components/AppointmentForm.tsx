@@ -1,11 +1,11 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
-import { Appointment, Practitioner, practitioners } from '@/types/appointment';
+import { Practitioner, practitioners } from '@/types/appointment';
 import { generateTimeSlots, formatTime } from '@/utils/timeUtils';
 import { useAppointments } from '@/context/AppointmentContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -41,6 +41,20 @@ const AppointmentForm: React.FC<AppointmentFormProps> = ({ open, onClose, initia
     endTime: timeSlots[1], // Default to 15 minutes after start time
     date: initialValues?.date || new Date().toISOString().split('T')[0],
   });
+  
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Update form when initialValues change
+  useEffect(() => {
+    if (initialValues) {
+      setFormData(prev => ({
+        ...prev,
+        practitioner: initialValues.practitioner,
+        startTime: initialValues.startTime,
+        date: initialValues.date,
+      }));
+    }
+  }, [initialValues]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -51,55 +65,77 @@ const AppointmentForm: React.FC<AppointmentFormProps> = ({ open, onClose, initia
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
     
-    // Validation
-    if (!formData.client.trim()) {
+    try {
+      // Validation
+      if (!formData.client.trim()) {
+        toast({
+          title: "Error",
+          description: "Client name is required",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      if (formData.startTime >= formData.endTime) {
+        toast({
+          title: "Error",
+          description: "End time must be after start time",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      const success = isEditing
+        ? await updateAppointment(initialValues!.id!, formData)
+        : await addAppointment(formData);
+      
+      if (success) {
+        toast({
+          title: isEditing ? "Appointment Updated" : "Appointment Created",
+          description: `${formData.client}'s appointment has been ${isEditing ? 'updated' : 'scheduled'}.`,
+        });
+        onClose();
+      } else {
+        toast({
+          title: "Error",
+          description: "This time slot conflicts with an existing appointment.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
       toast({
         title: "Error",
-        description: "Client name is required",
+        description: "Failed to save appointment. Please try again.",
         variant: "destructive",
       });
-      return;
-    }
-    
-    if (formData.startTime >= formData.endTime) {
-      toast({
-        title: "Error",
-        description: "End time must be after start time",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    const success = isEditing
-      ? updateAppointment(initialValues!.id!, formData)
-      : addAppointment(formData);
-    
-    if (success) {
-      toast({
-        title: isEditing ? "Appointment Updated" : "Appointment Created",
-        description: `${formData.client}'s appointment has been ${isEditing ? 'updated' : 'scheduled'}.`,
-      });
-      onClose();
-    } else {
-      toast({
-        title: "Error",
-        description: "This time slot conflicts with an existing appointment.",
-        variant: "destructive",
-      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
   
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (isEditing && initialValues?.id) {
-      deleteAppointment(initialValues.id);
-      toast({
-        title: "Appointment Deleted",
-        description: "The appointment has been removed from the schedule.",
-      });
-      onClose();
+      setIsSubmitting(true);
+      try {
+        await deleteAppointment(initialValues.id);
+        toast({
+          title: "Appointment Deleted",
+          description: "The appointment has been removed from the schedule.",
+        });
+        onClose();
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Failed to delete appointment. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -199,16 +235,17 @@ const AppointmentForm: React.FC<AppointmentFormProps> = ({ open, onClose, initia
                 type="button" 
                 variant="destructive" 
                 onClick={handleDelete}
+                disabled={isSubmitting}
               >
                 Delete
               </Button>
             )}
             <div className="flex space-x-2">
-              <Button type="button" variant="outline" onClick={onClose}>
+              <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
                 Cancel
               </Button>
-              <Button type="submit">
-                {isEditing ? 'Update' : 'Schedule'}
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Saving...' : isEditing ? 'Update' : 'Schedule'}
               </Button>
             </div>
           </DialogFooter>

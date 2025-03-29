@@ -4,9 +4,10 @@ import { useAppointments } from '@/context/AppointmentContext';
 import { practitioners, Practitioner } from '@/types/appointment';
 import { generateTimeSlots, formatTime, calculateDuration } from '@/utils/timeUtils';
 import AppointmentForm from './AppointmentForm';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const SchedulerGrid: React.FC<{ selectedDate: string }> = ({ selectedDate }) => {
-  const { appointments } = useAppointments();
+  const { appointments, isLoading } = useAppointments();
   const timeSlots = generateTimeSlots();
   
   const [formOpen, setFormOpen] = useState(false);
@@ -77,6 +78,17 @@ const SchedulerGrid: React.FC<{ selectedDate: string }> = ({ selectedDate }) => 
     const appointment = getAppointmentForCell(practitioner, timeSlot);
     return appointment && appointment.startTime === timeSlot;
   };
+  
+  if (isLoading) {
+    return (
+      <div className="container mx-auto px-4 py-6">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-full" />
+          <Skeleton className="h-[500px] w-full" />
+        </div>
+      </div>
+    );
+  }
   
   return (
     <div className="container mx-auto px-4 py-6">
